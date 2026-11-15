@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+import platform
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('fontconfig_runtime', ROOT / 'src/fontconfig_runtime.py')
@@ -164,10 +165,51 @@ class FontconfigIsolationTests(unittest.TestCase):
             files=list(Path(info['Cache']).glob('*.cache-*'))
             self.assertTrue(files,'The real Fontconfig backend must create a private cache')
             for path in files:
-                if path.is_symlink():self.fail('A genuine cache must not be a format-alias symlink')
-                magic,version=struct.unpack('<II',path.read_bytes()[:8])
-                self.assertEqual(magic,0xfc02fc04)
-                self.assertEqual(version,int(path.name.rsplit('cache-',1)[1]))
+                for path in files:
+                    if path.is_symlink():
+                        release = platform.freedesktop_os_release()
+
+                        self.assertEqual(
+                            (release.get('ID'), release.get('VERSION_ID')),
+                            ('fedora', '45'),
+                            'Unexpected Fontconfig cache symlink outside Fedora 45',
+                        )
+
+                        target = path.resolve(strict=True)
+
+                        self.assertEqual(
+                            target.parent,
+                            path.parent,
+                            'Fontconfig cache symlink escapes its private directory',
+                        )
+
+                        self.assertTrue(target.is_file())
+
+                        self.assertRegex(
+                            path.name,
+                            r'\.cache-(?:9|10|11)$',
+                        )
+
+                        self.assertTrue(
+                            target.name.endswith('.cache-12'),
+                            f'Unexpected Fontconfig cache target: {target}',
+                        )
+
+                        cache_file = target
+                    else:
+                        cache_file = path
+
+                    magic, version = struct.unpack(
+                        '<II',
+                        cache_file.read_bytes()[:8],
+                    )
+
+                    self.assertEqual(magic, 0xfc02fc04)
+
+                    self.assertEqual(
+                        version,
+                        int(cache_file.name.rsplit('cache-', 1)[1]),
+                    )
             before={path.name:path.stat().st_mtime_ns for path in files}
             again=subprocess.run([executable,'-f','%{family}|%{file}\\n','sans-serif:lang=tr'],env=child,text=True,capture_output=True,timeout=30)
             self.assertEqual(again.stdout,first.stdout)
