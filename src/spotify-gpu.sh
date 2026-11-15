@@ -50,8 +50,17 @@ if [[ "$mode" == auto ]]; then
     if [[ "${renderer,,}" == *llvmpipe* || "${renderer,,}" == *softpipe* ]]; then
         mode=software
     elif [[ "$nvidia" == 1 && ( "$hybrid" == 0 || "$driver_major" -ge 435 ) ]]; then
-        # The user's working LPF launcher uses desktop GL on Wayland/XWayland too.
-        mode=nvidia-desktop
+        # On Fedora 45 with a non-hybrid NVIDIA 580 driver, the CEF desktop
+        # GL path can silently disable GPU rendering while the ANGLE/GL path
+        # works. Keep the prior desktop GL policy everywhere else.
+        os_release=${SPOT_FLY_LIGHT_OS_RELEASE_FILE:-/etc/os-release}
+        if [[ "$hybrid" == 0 && "$driver_major" == 580 && -r "$os_release" ]] \
+            && grep -Eq '^ID="?fedora"?$' "$os_release" \
+            && grep -Eq '^VERSION_ID="?45"?$' "$os_release"; then
+            mode=nvidia
+        else
+            mode=nvidia-desktop
+        fi
     elif [[ "$mesa" == 1 ]]; then
         mode=mesa
     else
