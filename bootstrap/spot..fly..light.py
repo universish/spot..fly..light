@@ -19,6 +19,7 @@ import threading
 import time
 from urllib.request import HTTPRedirectHandler, build_opener
 from urllib.parse import unquote, urlsplit
+import platform
 
 HERE = Path(__file__).resolve().parent
 if str(HERE.parent / 'src') not in sys.path:
@@ -636,7 +637,7 @@ sha256sum --quiet -c .vendor-files.sha256
 %files
 {spotify_file}{app}/
 /usr/share/applications/{layout['desktop']}
-/usr/share/icons/hicolor/*/apps/{layout['icon']}.png
+/usr/share/icons/hicolor/*/apps/{client_icon_name(layout)}.png
 '''
 
 
@@ -687,13 +688,33 @@ def user_configuration():
     return flags, assignments
 
 
+def _fedora45_desktop():
+    """Preserve desktop metadata on Fedora 44 and other distributions."""
+    try:
+        release = platform.freedesktop_os_release()
+    except (OSError, AttributeError):
+        return False
+    return release.get('ID') == 'fedora' and release.get('VERSION_ID') == '45'
+
+
+def client_icon_name(layout):
+    # Only the current Spotify client should own the conventional spotify icon.
+    if layout['Kind'] == 'current' and _fedora45_desktop():
+        return 'spotify'
+    return layout['icon']
+
+
+def client_wm_class(layout):
+    return 'Spotify' if layout['Kind'] == 'current' and _fedora45_desktop() else 'spotify'
+
+
 def client_desktop(layout):
     current = layout['Kind'] == 'current'
     name = 'Spotify      via Spot..fly..light (unofficial)' if current else 'Spotify via ' + layout['Name'] + ' (unofficial)'
     command = 'spotify' if current else layout['command']
     return ('[Desktop Entry]\nType=Application\nName=' + name + '\nExec=' + command + ' %U\nIcon='
-            + layout['icon'] + '\nTerminal=false\nCategories=Audio;Music;Player;AudioVideo;\n'
-            + ('MimeType=x-scheme-handler/spotify;\n' if current else '') + 'StartupWMClass=spotify\n')
+            + client_icon_name(layout) + '\nTerminal=false\nCategories=Audio;Music;Player;AudioVideo;\n'
+            + ('MimeType=x-scheme-handler/spotify;\n' if current else '') + 'StartupWMClass=' + client_wm_class(layout) + '\n')
 
 
 def setup(args):
@@ -786,7 +807,7 @@ def setup(args):
                     size = icon.stem.removeprefix('spotify-linux-')
                     if not size.isdigit():
                         continue
-                    dest = payload / f"usr/share/icons/hicolor/{size}x{size}/apps/{layout['icon']}.png"
+                    dest = payload / f"usr/share/icons/hicolor/{size}x{size}/apps/{client_icon_name(layout)}.png"
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(icon, dest)
                 desktop = payload / 'usr/share/applications' / layout['desktop']

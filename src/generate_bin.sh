@@ -54,13 +54,19 @@ mkdir -p "$config_dir"
 [[ -f "$config_dir/spotify-flags.conf" ]] || "$data_dir/generate_flags_file.sh"
 flags=()
 envs=()
+# Environment variable names use ASCII syntax regardless of the user's locale.
+# In some locales (notably Turkish), [A-Z] ranges can exclude ASCII 'I'.
+valid_env_assignment() {
+    local LC_ALL=C
+    [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]
+}
 while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
     flags+=("$line")
 done < "$config_dir/spotify-flags.conf"
 while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
-    if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+    if ! valid_env_assignment "$line"; then
         printf 'spotify: invalid environment assignment in %s\n' "$config_dir/spotify.env" >&2
         exit 2
     fi

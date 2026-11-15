@@ -106,6 +106,27 @@ exit "${FAKE_EXIT_STATUS:-0}"
         self.assertFalse(any(arg.startswith(b"--ozone-platform=") for arg in self.args()))
         self.assertEqual((self.capture / "env-1").read_text(), "1|nvidia")
 
+    def test_fedora45_nvidia_580_auto_and_explicit_use_angle(self):
+        # Exercise the generated /usr/bin/spotify wrapper, not only the GPU
+        # selector: desktop Exec=spotify %U must select the working GPU path.
+        self.gpu(0, "0x10de", "nvidia", "580.196.07")
+        os_release = self.root / "os-release"
+        os_release.write_text('ID=fedora\nVERSION_ID=45\n')
+        self.env["SPOT_FLY_LIGHT_OS_RELEASE_FILE"] = str(os_release)
+        self.env["XDG_SESSION_TYPE"] = "wayland"
+        uri = "spotify:track:example"
+        result = self.run_launcher(uri)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"--use-gl=angle", self.args(1))
+        self.assertIn(b"--use-angle=gl", self.args(1))
+        self.assertNotIn(b"--use-gl=desktop", self.args(1))
+        self.assertEqual(self.args(1)[-1], uri.encode())
+        result = self.run_launcher("--gpu-mode=nvidia", uri)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"--use-gl=angle", self.args(2))
+        self.assertIn(b"--use-angle=gl", self.args(2))
+        self.assertEqual(self.args(2)[-1], uri.encode())
+
     def test_nouveau_is_mesa_not_proprietary_nvidia(self):
         self.gpu(0, "0x10de", "nouveau")
         self.assertEqual(self.run_launcher().returncode, 0)
@@ -192,6 +213,32 @@ exit "${FAKE_EXIT_STATUS:-0}"
         self.assertIn(b"--disable-gpu", self.args())
         self.assertEqual(self.run_launcher("--gpu-mode=native").returncode, 0)
         self.assertNotIn(b"--disable-gpu", self.args(2))
+
+    def test_env_assignment_validation_uses_ascii_with_non_c_locale(self):
+        # Bash regex ranges are locale-sensitive; a valid SPOTIFY_GPU_MODE
+        # assignment must not be rejected by a Turkish locale.
+        locales = subprocess.run(["locale", "-a"], capture_output=True,
+                                 text=True, check=True).stdout.splitlines()
+        turkish = next((name for name in locales
+                        if name.lower().replace("-", "").startswith("tr_tr.utf8")), None)
+        if turkish is None:
+            self.skipTest("Turkish UTF-8 locale not installed")
+        self.env["LC_ALL"] = turkish
+        folder = Path(self.env["XDG_CONFIG_HOME"]) / "spotify"
+        folder.mkdir(parents=True)
+        (folder / "spotify.env").write_text("SPOTIFY_GPU_MODE=software\n")
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"--disable-gpu", self.args())
+
+    def test_env_assignment_validation_rejects_non_ascii_names(self):
+        folder = Path(self.env["XDG_CONFIG_HOME"]) / "spotify"
+        folder.mkdir(parents=True)
+        (folder / "spotify.env").write_text("SPOTİFY_GPU_MODE=software\n")
+        result = self.run_launcher()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("invalid environment assignment", result.stderr)
+        self.assertFalse((self.capture / "count").exists())
 
     def test_sigterm_is_forwarded_without_retry(self):
         self.env["FAKE_FAILURE"] = "sleep"
