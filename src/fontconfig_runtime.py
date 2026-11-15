@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import stat
@@ -21,6 +22,35 @@ import xml.etree.ElementTree as ET
 
 MAX_FILES = 1024
 MAX_BYTES = 8 * 1024 * 1024
+
+# Fedora 45 Fontconfig 2.18 accepts an unbound literal xsi:nil attribute.
+# ElementTree correctly rejects that input as XML. Keep this compatibility
+# translation local to Fedora 45, and restore the literal spelling on output.
+_F45_XSI_NIL_TEMP = b'__spot_fly_light_xsi_nil__'
+_F45_XSI_NIL_ATTRIBUTE = re.compile(rb'(?<=\s)xsi:nil(?=\s*=)')
+
+
+def _is_fedora_45():
+    try:
+        release = platform.freedesktop_os_release()
+    except OSError:
+        return False
+    return release.get('ID') == 'fedora' and release.get('VERSION_ID') == '45'
+
+
+def _parse_fontconfig_xml(raw, *, fedora_45=False):
+    if not fedora_45:
+        return ET.fromstring(raw)
+    if _F45_XSI_NIL_TEMP in raw:
+        raise ValueError('Reserved Fedora 45 Fontconfig XML attribute marker')
+    return ET.fromstring(_F45_XSI_NIL_ATTRIBUTE.sub(_F45_XSI_NIL_TEMP, raw))
+
+
+def _serialize_fontconfig_xml(root, *, fedora_45=False):
+    data = ET.tostring(root, encoding='utf-8', xml_declaration=True)
+    if fedora_45:
+        return data.replace(_F45_XSI_NIL_TEMP + b'=', b'xsi:nil=')
+    return data
 
 
 def _home(env):
@@ -43,6 +73,7 @@ def _expand(value, env):
 class Configuration:
     def __init__(self, env, source_config):
         self.env = env
+        self.fedora_45 = _is_fedora_45()
         self.main = Path(source_config).absolute()
         self.sources = {}
         self.documents = {}
@@ -87,7 +118,7 @@ class Configuration:
         if b'<!ENTITY' in raw:
             raise ValueError('Fontconfig entity declarations are not supported in a private snapshot')
         try:
-            root = ET.fromstring(raw)
+            root = _parse_fontconfig_xml(raw, fedora_45=self.fedora_45)
         except ET.ParseError as exc:
             raise ValueError('Cannot parse Fontconfig configuration ' + str(path) + ': ' + str(exc)) from None
         if root.tag != 'fontconfig':
@@ -198,7 +229,7 @@ def prepare_fontconfig(env, record, profile, *, source_config=None, cache_root=N
     source_hash = record.get('SHA256')
     if not isinstance(source_hash, str) or not re.fullmatch(r'[0-9a-f]{64}', source_hash):
         raise ValueError('The installed client source hash is required for Fontconfig isolation')
-    identity = {'schema': 1, 'helper': profile['Name'], 'channel': record.get('Channel', 'stable'),
+    identity = {'schema': 2 if tree.fedora_45 else 1, 'helper': profile['Name'], 'channel': record.get('Channel', 'stable'),
                 'source_sha256': source_hash, 'configuration': tree.sources,
                 'documents': {name: hashlib.sha256(data).hexdigest() for name, data in tree.documents.items()}}
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -223,7 +254,7 @@ def prepare_fontconfig(env, record, profile, *, source_config=None, cache_root=N
             if name == main:
                 entry = ET.SubElement(root, 'cachedir')
                 entry.text = str(cache)
-            _atomic(config / name, ET.tostring(root, encoding='utf-8', xml_declaration=True) + b'\n')
+            _atomic(config / name, _serialize_fontconfig_xml(root, fedora_45=tree.fedora_45) + b'\n')
         _atomic(folder / 'source.json', (json.dumps(identity, indent=2, sort_keys=True) + '\n').encode())
     child['FONTCONFIG_FILE'] = str(config / main)
     child['FONTCONFIG_PATH'] = str(config)
