@@ -278,37 +278,6 @@ producers with unclear licenses from the old fork and Spotify data are not inclu
 `src/build_once.sh` preserves the old direct client build solely for local comparisons;
 the COPR/GitHub build release does not use this script.
 
-
-## Installer state and retry
-
-```sh
-spot..fly..light --status
-spot..fly..light --install
-spot..fly..light --rebuild
-```
-
-`--status` reports approval/build/install readiness. `--install` retries a
-previously built RPM after checking its hash and package identity; it does not
-repeat the DEB download. `--rebuild` requests a fresh local verification/build; it does not run ClamAV on the user host. New source
-versions or bootstrap revisions need renewed approval.
-
-This standalone installer does not use the actual LPF framework; see the
-[LPF comparison](docs/lpf-framework-audit.md) for account, lifecycle and
-notification differences.
-
-## Spot..Light: stable / testing channel operations
-
-```sh
-spot..fly..light --setup
-spot..fly..light --setup -unstable
-sudo dnf upgrade --refresh spot-fly-light
-spot..fly..light --update
-spot..fly..light --update -unstable
-sudo dnf remove spot-fly-light-client-local spot-fly-light
-sudo dnf copr disable universish/Spotify..Client
-```
-
-`-unstable` is a Spot..Light option, not a DNF option or a second package name.
 Setup/update without it selects stable, including a switch from testing back to
 stable; that can install an older vendor version. Both channels replace the
 same local target, so there is one installed client. Launching `spot..fly..light` runs
